@@ -22,26 +22,19 @@ from sys import stderr
 from os.path import isdir, join, split, exists
 from os import makedirs
 
-NETBOOT_HTTP_URL = 'setme'
-AUTOINSTALL_URL = 'setme'
-
 class NothingDone(Exception):
     """Kind not found"""
 
-def expand_variables(build, variant, text, tftp_path=None):
+def expand_variables(build, variant, text):
     """Expand some variables of the form @VAR@ in whom"""
-    subst = {'TFTP_PATH': tftp_path if tftp_path else ('builds/%s/%s/%s' % (
-            build['branch'], build['tag'], variant['netboot'])),
-             'NETBOOT_URL': '%s/%s/repository%s/' % (
-            NETBOOT_HTTP_URL, '/'.join(build['build_directory'].split('/')[2:]),
-            ('-'+variant['kind']) if variant['kind'] != 'plain' else ''),
-             'AUTOINSTALL_URL': AUTOINSTALL_URL}
     stext = text
-    for var, value in subst.items():
-        stext = stext.replace('@'+var+'@', value)
+    for var, value in build.items() + variant.items():
+        target = '@'+var+'@'
+        if target in stext:
+            stext = stext.replace(target, value)
     return stext
 
-def generate_pxelinux_cfg(build, tftp_path=None):
+def generate_pxelinux_cfg(build):
     """Return the text of a set of pxelinux.cfg menu entries"""
     out = []
     for variant in build['variants']:
@@ -55,7 +48,7 @@ def generate_pxelinux_cfg(build, tftp_path=None):
                     section = spl[1]
                 elif section:
                     orig_labels.setdefault(section, list())
-                    sline = expand_variables(build, variant, line, tftp_path)
+                    sline = expand_variables(build, variant, line)
                     orig_labels[section].append(sline.replace('\n', ''))
 
         for orig, new in [('xc-installer', ''),
@@ -72,11 +65,9 @@ def generate_pxelinux_cfg(build, tftp_path=None):
             out += orig_labels[orig]+['']
     return '\n'.join(out)+'\n\n'
 
-def write_netboot(build, destd, tftp_path=None, ansfile_filter=None, kind=None,
+def write_netboot(build, destd, ansfile_filter=None, kind=None,
                   ansfile_glob='*.ans', verbose=False, pretend=False):
-    """rsync netboot answer files to destd.
-    destd accessible as tftp_path, which will be worked out if not specified
-    using the local convention."""
+    """rsync netboot answer files to destd"""
     if not isdir(destd):
         if verbose:
             print 'INFO: make directory', destd
@@ -104,8 +95,7 @@ def write_netboot(build, destd, tftp_path=None, ansfile_filter=None, kind=None,
                                  ansfile_glob)):
             with file(ansfile, 'r') as fin:
                 content = fin.read()
-            scontent = expand_variables(build, variantd, content,
-                                        tftp_path=tftp_path)
+            scontent = expand_variables(build, variantd, content)
             if ansfile_filter:
                 scontent = ansfile_filter(scontent)
             ansfile = join(destnet, split(ansfile)[1])

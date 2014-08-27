@@ -21,7 +21,7 @@
 generate pxe config infrastructure; incomplete port
 """
 
-from sys import stderr
+from sys import stderr, exit
 from time import asctime
 from os import mkdir, listdir
 from os.path import isdir, join, isfile
@@ -32,16 +32,12 @@ from socket import gethostname, timeout
 from time import asctime
 from infrastructure.xt.decode_tag import extract_branch
 from infrastructure.xt.decode_tag import is_tag
-from infrastructure.xt.inspect_build import inspect_build
+from infrastructure.xt.inspect_build import inspect_build, populate
 from infrastructure.xt.generate_pxe_files import write_netboot, atomic_write
 from infrastructure.xt.generate_pxe_files import generate_pxelinux_cfg
 from infrastructure.xt.releases import scan_releases
 
-BRANCH_MENUS = ['setme', 'setme', 'setme', None]
-STATIC_DIRECTORY = 'setme'
-BVT_RESULT_URL = 'setme'
 RELEASE_LINES = 6
-LATESTBUILDS_GIT = 'setme'
 MENU_HEADER = """PXE Boot made %20s *Default is local boot after 30 seconds*
 
 3.2.0, 3.1.4 (altogether %s XT releases and %d builds - try tab completion)
@@ -55,29 +51,30 @@ __/~~XenClient XT recent builds~~\_____________________________________________
 <ver>-u - upgrade          <ver>-trial[-m|-u|-w|-mw] - trial version
 -------------------------------------------------------------------------------
 """
-XC_MASTER_BUILDS = 'setme'
-XC_BUILDS = ['setme']
-CONFIG_DIR = 'setme'
 
-def generate_menu(menuset, nreleases, nbuilds, columns=2, width=79, menulen=5,
-                  segstrip=2):
+def generate_menu(menuset, nreleases, nbuilds, branch_menus,
+                  bvt_results_url=None,
+                  columns=2, width=79, menulen=5):
     """Generate menu with menuset, in a certain number of
     columns and width"""
-    menus = [reversed(menuset.get(br, [])[-5:]) for br in BRANCH_MENUS]
+    menus = [reversed(menuset.get(br, [])[-5:]) for br in branch_menus]
     grid = {}
     labels = {}
     nrows = 0
     for i, menu in enumerate(menus):
         for j, build in enumerate(menu):
-            try:
-                stream = urlopen(BVT_RESULT_URL+build['tag'], timeout=10)
-                bvtr = stream.read()
-                if stream.getcode() != 200:
-                    bvtr = 'code '+str(stream.getcode())
-            except URLError:
-                bvtr = '?/?'
-            except timeout:
-                bvtr = '[timeout]'
+            if bvt_results_url is None:
+                bvtr = ''
+            else:
+                try:
+                    stream = urlopen(bvt_results_url+build['tag'], timeout=10)
+                    bvtr = stream.read()
+                    if stream.getcode() != 200:
+                        bvtr = 'code '+str(stream.getcode())
+                except URLError:
+                    bvtr = '?/?'
+                except timeout:
+                    bvtr = '[timeout]'
             count = 1 + j + i * menulen
             # store a copy of build with alias replaced
             labels[count] = dict(build, alias=str(count))
@@ -157,21 +154,22 @@ def classify_builds(builds, interesting_branches):
                                                  b['kind'] == 'cam-oeprod'])
     return menuset
 
-
-def generate_pxelinux_includes(output_directory, builds, releases,
+def generate_pxelinux_includes(output_directory, builds, releases, args,
                                verbose=False):
     """Generate files in output_directory for builds and releases"""
-    menuset = classify_builds(builds, BRANCH_MENUS)
+    menuset = classify_builds(builds, args.branch_menu)
     latestdir = join(output_directory, 'latestbuilds')
     if not isdir(latestdir):
         mkdir(latestdir)
-    menu, labels = generate_menu(menuset, len(releases), len(builds))
+    menu, labels = generate_menu(menuset, len(releases), len(builds),
+                                 args.branch_menu, args.bvt_results_url)
     atomic_write(join(latestdir, 'automenu.inc'), menu)
     buildseq = releases + [labels[label] for label in sorted(labels.keys())
                            ] + list(reversed(builds))
     seen = {}
     buildsequ = []
-    for build in buildseq:
+    for pbuild in buildseq:
+        build = populate(pbuild, args.netboot_url, args.autoinstall_url)
         if build['alias'] in seen:
             print 'WARNING: found', build['alias'], 'at',
             print build['build_directory'], 'and',
@@ -194,20 +192,40 @@ def get_args():
     parser = ArgumentParser(description='Check builds and releases and '
                             'optionally generate material for PXE '
                             'booting.')
-    parser.add_argument('output_directory', metavar='DIRECTORY', nargs='?',
+    parser.add_argument('output_directory', metavar='OUTPUT_DIRECTORY',
                         help='Generate menu, pxelinux.cfg and rsync '
-                        'material into DIRECTORY.')
+                        'material into OUTPUT_DIRECTORY.')
+    parser.add_argument('netboot_url', action='store', metavar='NETBOOT_URL',
+                        help='Netboot URLs begin with NETBOOT_URL')
+    parser.add_argument('autoinstall_url', action='store',
+                        metavar='AUTOINSTALL_URL',
+                        help='Autoinstall URLs being with AUTOINSTALL_URL')
+    parser.add_argument('releases_directory', action='store',
+                        metavar='RELEASES_DIRECTORY',
+                        help='Releases can be found in RELEASES_DIRECTORY')
+    parser.add_argument('-s', '--scan-directory', metavar='DIRECTORY',
+                        action='append',
+                        help='Scan DIRECTORY for builds')
+    parser.add_argument('-b', '--build-output', action='store',
+                        metavar='DIRECTORY',
+                        help='Generate files that boots the OpenXT build '
+                        'output at DIRECTORY instead of looking at all builds.')
     parser.add_argument('-n', '--generate-netboots', action='store_true',
                         help='Generate netboot* directories')
     parser.add_argument('-c', '--clean-old-netboots', action='store_true',
                         help='Remove netboot directories for deleted builds')
     parser.add_argument('-i', '--generate-pxelinux-includes', help='Generate '
                         'autogenerated.cfg and automenu.inc for use from '
-                        'pxelinux.cfg in '+CONFIG_DIR, action='store_true')
+                        'pxelinux.cfg', action='store_true')
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='Increase verbosity')
     parser.add_argument('-a', '--apply', action='store_true',
                         help='Apply destructive actions rather than list them')
+    parser.add_argument('-m', '--branch-menu', action='append',
+                        metavar='BRANCH',
+                        help='Create a branch menu for BRANCH')
+    parser.add_argument('-r', '--bvt-results-url', metavar='URL',
+                        help='Base URL for BVT results service is URL')
     return parser.parse_args()
 
 def clean_old_netboots(output_directory, builds, verbose=False, pretend=False):
@@ -236,12 +254,32 @@ def clean_old_netboots(output_directory, builds, verbose=False, pretend=False):
 def main():
     """Entry point"""
     args = get_args()
+    if args.build_output:
+        if not isdir(args.build_output):
+            print 'ERROR:', args.build_output, 'not found'
+            exit(1)
+        build = populate(inspect_build(args.build_output, None)[0],
+                         args.netboot_url, args.autoinstall_url)
+
+        write_netboot(build, args.output_directory,
+                      pretend=not args.apply) 
+        check_call(['rsync', '-raP', args.build_output+'/repository/',
+                    args.output_directory])
+        atomic_write(join(args.output_directory, 'pxelinux.cfg'),
+                     ('#autogenerated by genpxe at %s\n' % (asctime()))+
+                     generate_pxelinux_cfg(build) +
+                     '\nlabel local\n  localboot 0\ndefault=build\nprompt 1\n')
+        return
     if args.verbose:
         print 'INFO: scanning builds'
-    builds = order_by('build_number', scan_builds(XC_BUILDS, verbose=args.verbose))
+    builds = order_by('build_number', scan_builds(args.scan_directory,
+                                                  verbose=args.verbose))
+    if args.verbose:
+        print 'INFO: found', len(builds), 'builds'
     if args.verbose:
         print 'INFO: scanning releases'
-    releases = order_by('alias', scan_releases())
+
+    releases = order_by('alias', scan_releases(args.releases_directory))
     if args.clean_old_netboots:
         clean_old_netboots(args.output_directory, builds+releases,
                            verbose=args.verbose, pretend=not args.apply)
@@ -251,12 +289,14 @@ def main():
             print 'INFO: updating netboot material for', count,
             print 'builds'
         for build in releases + builds:
-            write_netboot(build, join(args.output_directory, 'builds',
-                                      build['branch'], build['tag']),
-                          pretend = not args.apply)
+            write_netboot(populate(build, args.netboot_url,
+                                   args.autoinstall_url),
+                          join(args.output_directory, 'builds',
+                               build['branch'], build['tag']),
+                          pretend=not args.apply)
     if args.generate_pxelinux_includes:
         generate_pxelinux_includes(args.output_directory, builds, releases,
-                                   verbose=args.verbose)
+                                   args, verbose=args.verbose)
 
 if __name__ == '__main__':
     main()

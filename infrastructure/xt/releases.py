@@ -23,19 +23,18 @@ from sys import stderr
 from infrastructure.xt.decode_tag import is_tag
 from infrastructure.xt.inspect_build import inspect_build
 
-RELEASES_DIRECTORY = 'setme' # add path to release area here
 NOT_FOR_DISTRIBUTION = 'NOT_FOR_DISTRIBUTION'
 DATE_REGEXP = compile(r'[0-9]{4}-[0-9]{2}-[0-9]{2}-.*')
 
-def scan_releases():
+def scan_releases(releases_directory):
     """Return a sequence of dictionaries describing releases.
 
     Will not cope with many of these inconsistent releases that predate
     release.py; they are ignored."""
     releases = []
     rnames = {}
-    for release in listdir(RELEASES_DIRECTORY):
-        nfd_dir = join(RELEASES_DIRECTORY, release, NOT_FOR_DISTRIBUTION)
+    for release in listdir(releases_directory):
+        nfd_dir = join(releases_directory, release, NOT_FOR_DISTRIBUTION)
         if isdir(nfd_dir):
             nfd_tags = [f for f in listdir(nfd_dir) if is_tag(f)]
             if len(nfd_tags) == 0:

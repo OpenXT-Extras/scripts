@@ -16,16 +16,16 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #
 
-BUILD_PATH = 'setme/%s/%s' # add path to build directory here
-OLD_BUILD_PATH = 'setme/%s/%s' # add path to archived build directory here
 from os.path import isdir
 
 class BuildNotFound(Exception):
     """Unable to locate build"""
 
-def find_build(branch, tag):
+def find_build(branch, tag, build_path=None, old_build_path=None):
     """Return a directory for tag on branch or raise BuildNotFound"""
-    for directory_format in [BUILD_PATH, OLD_BUILD_PATH]:
+    for directory_format in [build_path, old_build_path]:
+        if directory_format is None:
+            continue
         loc = directory_format % (branch, tag)
         if isdir(loc):
             return loc

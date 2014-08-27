@@ -21,10 +21,10 @@ from infrastructure.xt.get_build_info import get_build_info
 from infrastructure.xt.decode_tag import extract_build_number, extract_branch
 from os.path import join, isfile
 
-def inspect_build(build_dir, tag, typename='build', alias='build'):
+def inspect_build(build_dir, tag=None, typename='build', alias='build'):
     """Work out information about build_dir which contains a build of tag"""
     variants = []
-    branch = extract_branch(tag)
+    branch = extract_branch(tag) if tag else None
     build_info = get_build_info(branch, tag, build_dir=build_dir)
     for kind, dirname in [('plain', 'netboot'), 
                           ('trial', 'netboot-trial'),
@@ -35,10 +35,32 @@ def inspect_build(build_dir, tag, typename='build', alias='build'):
             pxelinux = join(build_dir, netboot, 'pxelinux.cfg')
             if isfile(pxelinux):
                 variants.append({'kind':kind, 'pxelinux':pxelinux,
-                                 'netboot':netboot})
+                                 'netboot':netboot,
+                                 'variant_postfix':('-'+kind) if 
+                                 kind != 'plain' else ''})
     if variants == []:
         return []
-    return [{'type':typename, 'build_number': extract_build_number(tag),
+    return [{'type':typename, 
+             'build_number': extract_build_number(tag) if tag else None,
              'branch':branch, 'variants': variants, 'alias':alias,
-             'kind':extract_kind(tag),
+             'kind':extract_kind(tag) if tag else None,
              'tag':tag, 'build_directory':build_dir}]
+
+
+def populate(build, netboot_url=None, autoinstall_url=None):
+    """Adds extra expansion variables to a build record returned by inspect_build,
+    given site configuration netboot_url and autoinstall_url"""
+    out = dict(build)
+    if 'TFTP_PATH' not in out:
+        out['TFTP_PATH'] = ('builds/'+build['branch']+'/'+
+                            build['tag']+'/@netboot@')
+    out.setdefault('netboot_build_path', '/'.join(
+            build['build_directory'].split('/')[2:]))
+    if netboot_url:
+        full_netboot_url = (netboot_url+'/'+out['netboot_build_path']+
+                            '/repository@variant_postfix@')
+        out.setdefault('NETBOOT_URL', full_netboot_url)
+    if autoinstall_url:
+        out.setdefault('AUTOINSTALL_URL', autoinstall_url)
+    return out
+
